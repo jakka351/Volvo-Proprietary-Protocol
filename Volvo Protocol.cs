@@ -60,41 +60,68 @@
 // /////
 // ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 #endregion License
-//using Cryptography.Obfuscation;
-using System.Threading;
-using System;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Windows.Forms;
 using System;
 using System.IO;
+using System.Text;
+using System.Linq;
 using System.Drawing;
 using System.Threading;
-using J2534;
-using static System.Windows.Forms.VisualStyles.VisualStyleElement;
-using System.Runtime.InteropServices;
-using System.ComponentModel;
-using static System.Net.Mime.MediaTypeNames;
-using System.Reflection.Emit;
 using System.Collections;
+using System.Windows.Forms;
 using System.Globalization;
-using System.Runtime.ConstrainedExecution;
-using System.Text;
+using System.ComponentModel;
+using System.Reflection.Emit;
 using System.Threading.Tasks;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Runtime.ConstrainedExecution;
+using static System.Net.Mime.MediaTypeNames;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement;
+using J2534;
+using Microsoft.Build.Tasks;
+using static System.Collections.Specialized.BitVector32;
+using static System.Windows.Forms.AxHost;
 // ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 namespace OBD2
 {
+    //Volvo Proprietary Protocol - format used in flashing the ECU via the 11 bit ID canbus.
 	public partial class D13 : Form
 	{
 		bool volvoStartCommand()
 		{
 			try
 			{
-			    byte[] command = { 0x00, 0x00, 0x07, 0xFF, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+                // 6088.22928 1 07FF Rx   d 8 21 00 00 00 00 00 00 00 >> Havent Included this frame in the Volvo Protocol.cs file yet
+                // 6092.76928 1 07FF Rx   d 8 40 00 00 00 00 00 00 00 >> Start Session
+                // 6092.85928 1 07FE Rx   d 8 80 00 00 00 00 00 00 00 << Positive Response(+40)
+
+                // 6092.88928 1 07FF Rx   d 8 4E 00 00 00 00 00 00 00 >> Request
+                // 6092.89928 1 07FE Rx   d 8 8E 00 00 00 57 77 E0 10 << Response that appears to be multiframe
+                // 6092.91928 1 07FE Rx   d 8 CE 00 00 00 40 00 00 98 <<
+                // 6092.92928 1 07FE Rx   d 8 0E 00 00 00 10 01 20 20 <<
+
+                // 6092.98928 1 07FF Rx   d 8 41 00 00 00 00 00 00 00 >>
+                // 6093.00928 1 07FE Rx   d 8 81 54 47 71 82 13 04 3E <<
+
+                // 6093.02928 1 07FF Rx   d 8 42 33 95 6B 10 12 08 29 >>
+                // 6093.04928 1 07FE Rx   d 8 82 33 95 6B 10 12 08 29 <<
+
+                // 6093.06928 1 07FF Rx   d 8 44 01 00 00 00 00 00 00 >>
+                //                 6093.07928 1 07FE Rx   d 8 84 01 55 00 00 00 00 00 >>
+
+                // 6093.15928 1 07FF Rx   d 8 40 00 00 00 00 00 00 00 >>
+                // 6093.15928 1 07FE Rx   d 8 80 00 00 00 00 00 00 00 << These frames will all need to be put into the protcol file.
+
+                // 6093.18928 1 07FF Rx   d 8 4B 00 00 00 00 80 04 00 >> Start of Firmware Download from ECU
+                // 6093.20928 1 07FE Rx   d 8 8B 80 BA BE 00 00 00 FF << 8B is positive response so our data bytes are the last 7 bytes
+                // 6093.23928 1 07FF Rx   d 8 4B 00 00 04 00 80 04 00 << Increments by 4
+                // 6093.23928 1 07FE Rx   d 8 8B 80 BA BE 00 00 00 FF
+                // 6093.27928 1 07FF Rx   d 8 4B 00 00 08 00 80 04 00 << Increments by 4 to 8
+                // 6093.27928 1 07FE Rx   d 8 8B 80 BA BE 00 00 00 FF
+                byte[] command = { 0x00, 0x00, 0x07, 0xFF, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 			    string response = sendPassThruMsg(command);
 			    // response = 00 00 07 FE 80 00 00 00 00 00 00 00
-			    response = response.Replace(" ", ""); response = response.SubString(8, 2);
+			    response = response.Replace(" ", ""); response = response.Substring(8, 2);
 			    int resp = int.Parse(response, System.Globalization.NumberStyles.HexNumber);
 			    switch(resp)
 			    {
@@ -106,39 +133,53 @@ namespace OBD2
 			    	default:
 			    		return false;
 			    }
+                return false;
 				
 			}
-			catch(Exception Ex) { Log("Volvo Propietary Command Error\r\n"); }
+			catch(Exception Ex) { Log("Volvo Propietary Command Error\r\n"); return false; }
 		}
-		public bool VolvoCommand4B(uint offset)
+		public byte[] VolvoCommand4B(uint offset)
         {
             // Based on logs: 4B 00 00 [offsetLow] [offsetHigh] 80 04 00
             byte offsetLow  = (byte)(offset & 0xFF);
             byte offsetHigh = (byte)((offset >> 8) & 0xFF);
-
+            byte[] nodat = {
+                0x00, 0x00
+            };
             byte[] cmd = {
                 0x00, 0x00, 0x07, 0xFF, 0x4B, 0x00, 0x00, offsetLow, offsetHigh, 0x80, 0x04, 0x00
             };
-
+            // response = 00 00 07 FE 80 00 00 00 00 00 00 00
             string response = sendPassThruMsg(cmd);
-		    response = response.Replace(" ", ""); response = response.SubString(8, 2);
-		    int resp = int.Parse(response, System.Globalization.NumberStyles.HexNumber);
-            if (resp == null)
+		    response = response.Replace(" ", ""); 
+            string responseByte = response.Substring(8, 2);
+		    int resp = int.Parse(responseByte, System.Globalization.NumberStyles.HexNumber);
+            string firmwareByte1 = response.Substring(10, 2); string firmwareByte2 = response.Substring(12, 2);
+            string firmwareByte3 = response.Substring(14, 2); string firmwareByte4 = response.Substring(16, 2);
+            string firmwareByte5 = response.Substring(18, 2); string firmwareByte6 = response.Substring(20, 2);
+            string firmwareByte7 = response.Substring(22, 2);
+            byte firmware1 = Convert.ToByte(firmwareByte1, 16); byte firmware2 = Convert.ToByte(firmwareByte2, 16);
+            byte firmware3 = Convert.ToByte(firmwareByte3, 16); byte firmware4 = Convert.ToByte(firmwareByte4, 16);
+            byte firmware5 = Convert.ToByte(firmwareByte5, 16); byte firmware6 = Convert.ToByte(firmwareByte6, 16);
+            byte firmware7 = Convert.ToByte(firmwareByte7, 16);
+            byte[] firmwareArray = {
+                firmware1, firmware2, firmware3, firmware4, firmware5, firmware6, firmware7
+            };
+            switch(resp)
             {
-                Log($"No response for 0x4B offset=0x{offset:X}");
-                return false;
+                case 0x00:
+                    Log($"No response for 0x4B offset=0x{offset:X}");
+                    return nodat;
+                case 0x8B:
+                    Log($"Offset 0x{offset:X}, success: {resp.ToString()}");
+                    return firmwareArray;
+                default:
+                    Log($"Offset 0x{offset:X}, unexpected response: {resp.ToString()}");
+                    return nodat;
             }
-            if (resp[0] == 0x8B)
-            {
-                // Possibly 8B 80 BA BE ...
-                Log($"Offset 0x{offset:X}, success: {BitConverter.ToString(resp)}");
-                return true;
-            }
-            Log($"Offset 0x{offset:X}, unexpected response: {BitConverter.ToString(resp)}");
-            return false;
         }
  		// -----------------------------------------------
-        // 3. Read Data using Volvo Commands 
+        // 3. One Combined "Flash" Flow
         // -----------------------------------------------
         public void readData()
         {
@@ -146,17 +187,11 @@ namespace OBD2
             if (!volvoStartCommand()) return;
             // Possibly do 0x4E, 0x41, etc. 
             // For illustration, we do multiple "0x4B" with offsets from 0 to 0x100 in increments of 4.
-            for (uint addr = 0; addr <= 0x100; addr += 4)
+            for (uint addr = 0x0000; addr <= 0x03FC; addr += 4)
             {
-                if (!VolvoCommand4B(addr))
-                {
-                    Log("Aborting custom flash steps");
-                    break;
-                }
-                else
-                {
-                	// Parse Firmware Data here, or return it to flash routine method
-                }
+                VolvoCommand4B(addr);
+                Log("Aborting custom flash steps");
+                // Parse Firmware Data here, or return it to flash routine method
             }
             Log("Volvo Proprietary Protocol Routine complete.");
         }

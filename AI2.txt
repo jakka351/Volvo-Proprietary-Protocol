@@ -1,0 +1,431 @@
+Below is a detailed look at the CAN log you provided, which shows two major phases:
+
+A standard UDS (ISO 14229) diagnostic session (beginning around timestamp ~6009.66, through ~6081–6092).
+A proprietary Volvo bootloader sequence (beginning around ~6092.77), where the ECU apparently transitions away from standard UDS responses and into a custom command set using 0x07FF (request) and 0x07FE (response).
+We’ll walk through the UDS portion first, then show how it transitions into the custom Volvo portion. Finally, we’ll outline a combined C# approach.
+
+1. Standard UDS Portion
+Below is a typical flow of a UDS-based reprogramming session on CAN. Usually, you have:
+
+Request frames on a “diagnostic request” CAN ID (often 0x7E0, but here it appears to be 0x07FF or sometimes 0x061B/0x071B in your log).
+Response frames on the corresponding “diagnostic response” CAN ID (often 0x7E8, but here it looks like 0x07FE or 0x071B).
+In your log, the standard UDS messages appear with UDS services in the first byte of the data (e.g., 0x10, 0x22, 0x27, 0x31, 0x34, 0x36, 0x37, etc.). Their positive-response codes are 0x50, 0x62, 0x67, 0x71, 0x74, 0x76, 0x77, etc.
+
+1.1 Common UDS Services in Your Log
+Diagnostic Session Control (0x10 / 0x50)
+
+Request: 05 10 02 54 52 ...
+0x10 = “Diagnostic Session Control”
+0x02 = “Programming Session” or some special session subfunction
+Extra bytes 54 52 57 00 00 may be OEM data appended.
+Positive Response: 06 50 02 00 19 01 F4 00
+0x50 = positive response to 0x10
+0x02 = subfunction
+The rest might be P2 timing or max number of responses, etc.
+Read Data By Identifier (0x22 / 0x62)
+
+Request: 03 22 F1 80 asks for DID = F1 80 (a common “ECU Serial/Part Number” or “Software ID”).
+Response: typically “multi-frame” with first byte 0x62 = “positive response” to 0x22, followed by the DID and data.
+Example in the log:
+1st frame: 10 13 62 F1 80 01 54 52 (length=0x13 total, i.e. 19 bytes).
+Next frames: 21 57 20 42 4F 4F 54 2D, 22 30 31 2E 30 31 56 00.
+Putting them together, you get data: 62 F1 80 01 54 52 57 20 42 4F 4F 54 2D 30 31 2E 30 31 56 00
+Possibly “TRW BOOT-01.01V” or similar string.
+Security Access (0x27 / 0x67)
+
+Requests:
+02 27 01 (request seed)
+05 27 02 42 5F 6F 00 00 (send key)
+Responses:
+05 67 01 00 00 00 00 00 (seed)
+02 67 02 00 00 00 00 00 (key accepted)
+Request Download (0x34 / 0x74)
+
+Request: 10 0B 34 00 44 40 00 80 ...
+0x10 means this is a multi-frame with length 0x0B.
+0x34 is the “Request Download” service.
+00 44 40 00 80 are parameters indicating memory address, size, or format.
+Response: 04 74 20 0F FA 00 00 00
+0x74 is “positive response” to 0x34.
+The rest is the “Download Response Parameter Record” (block size, etc.).
+Transfer Data (0x36 / 0x76)
+
+Request: e.g. 10 F2 36 01 40 00 80 20 ... with subsequent frames.
+0x36 is “Request Transfer Data,” subfunction or sequence number in the next byte(s).
+Response: e.g. 02 76 01 00 00 00 00 00 => positive response to the 0x36 with subfunction 0x01.
+Request Transfer Exit (0x37 / 0x77)
+
+Request: 01 37 00 00 00 00 00 00
+Response: 03 7F 37 78 00 00 00 00 => negative response 0x7F, service 0x37, NRC=0x78 (“Request Correctly Received – Response Pending”), or some other status.
+The ECU might not be ready to exit yet, or is taking a while to finalize.
+RoutineControl (0x31 / 0x71)
+
+Request: 10 08 31 01 03 01 00 00 ... (start/stop routine, subfunction 0x01??).
+Response: 06 71 01 03 01 00 00 00 => positive response to 0x31.
+In summary, from ~6009 to ~6092 you see a fairly textbook UDS flashing:
+
+Start programming session (0x10 02)
+Read DID (0x22)
+Security access (0x27)
+Request Download (0x34)
+Transfer Data in multiple chunks (0x36)
+Attempt Transfer Exit (0x37)
+Possibly a RoutineControl (0x31)
+2. Transition to Proprietary Volvo Bootloader
+Around 6092.77, the ECU starts accepting frames on the same CAN IDs (0x07FF request, 0x07FE response), but the data no longer follows standard UDS service codes. Instead, we see:
+
+yaml
+Copy code
+6092.76928 1 07FF  Rx d 8  40 00 00 00 00 00 00 00
+6092.85928 1 07FE  Rx d 8  80 00 00 00 00 00 00 00
+
+6092.88928 1 07FF  Rx d 8  4E 00 00 00 00 00 00 00
+6092.89928 1 07FE  Rx d 8  8E 00 00 00 57 77 E0 10
+...
+Here’s the pattern we saw earlier:
+
+The first nibble of the request often reappears in the response plus 0x80.
+e.g., 0x40 → response 0x80; 0x4E → response 0x8E; 0x4B → response 0x8B.
+Additional bytes in the response may carry address/data or status.
+This is no longer standard UDS (i.e., not 0x10, 0x22, 0x27, etc. in the first byte). Instead, it’s a custom sequence, presumably a specialized Volvo flashloader routine. After initial “handshake” commands (0x40, 0x4E, 0x41, 0x42, 0x44), we see repeated “0x4B” commands with a 4-byte offset that increments by 4 each time:
+
+yaml
+Copy code
+6093.18928 1 07FF Rx d8  4B 00 00 00 00 80 04 00
+6093.20928 1 07FE Rx d8  8B 80 BA BE 00 00 00 FF
+6093.23928 1 07FF Rx d8  4B 00 00 04 00 80 04 00
+6093.23928 1 07FE Rx d8  8B 80 BA BE 00 00 00 FF
+6093.27928 1 07FF Rx d8  4B 00 00 08 00 80 04 00
+6093.27928 1 07FE Rx d8  8B 80 BA BE 00 00 00 FF
+...
+This continues up to offsets: 0x00, 0x04, 0x08, 0x0C, 0x10, ... 0xFC, 0x100, etc., presumably writing or reading 4 bytes at a time to the ECU’s memory. The response is always 8B 80 BA BE 00 00 00 FF or a slight variation near the end.
+
+Eventually it ends with some large swath of FF FF FF FF ... data frames from the ECU, possibly reading blank or erased memory. That suggests the ECU might be streaming memory contents or sending filler data.
+
+3. Putting It All Together in C#
+Below is a conceptual code snippet that handles both phases:
+
+A standard UDS session (using a typical UDS layering: Diagnostic Session Control, Security Access, Request Download, Transfer Data, etc.).
+A Volvo proprietary bootloader portion, once the ECU is in “Volvo special mode” (the 0x40, 0x4E, 0x4B commands, etc.).
+Important: The exact parameter bytes (addresses, lengths, etc.) will vary based on your ECU’s memory map and Volvo’s internal docs. The code is simplified to demonstrate the structure.
+
+csharp
+Copy code
+using System;
+using System.Threading;
+
+namespace VolvoBootloaderExample
+{
+    public class VolvoFlasher
+    {
+        private const int RequestId  = 0x07FF; // In your logs
+        private const int ResponseId = 0x07FE;
+
+        private readonly ICanInterface _can;
+
+        public VolvoFlasher(ICanInterface canInterface)
+        {
+            _can = canInterface;
+        }
+
+        // -----------------------------------------------
+        // 1. UDS-Like Methods
+        // -----------------------------------------------
+
+        /// <summary>
+        /// Diagnostic Session Control (0x10)
+        /// Start a programming session (subfunction = 0x02).
+        /// Example: 05 10 02 54 52 57 00 00
+        /// </summary>
+        public bool StartProgrammingSession()
+        {
+            var payload = new byte[] { 0x05, 0x10, 0x02, 0x54, 0x52, 0x57, 0x00, 0x00 };
+            _can.SendFrame(RequestId, payload);
+
+            var resp = WaitForResponse(ResponseId, 1000);
+            if (resp == null) {
+                Console.WriteLine("No response to StartProgrammingSession");
+                return false;
+            }
+            // Positive response is 0x50 (i.e. 0x10 + 0x40)
+            if (resp.Length >= 2 && resp[1] == 0x50 && resp[2] == 0x02)
+            {
+                Console.WriteLine("Programming Session started.");
+                return true;
+            }
+            Console.WriteLine($"Unexpected DSC response: {BitConverter.ToString(resp)}");
+            return false;
+        }
+
+        /// <summary>
+        /// Security Access (0x27) - e.g. request seed, then send key
+        /// </summary>
+        public bool DoSecurityAccess()
+        {
+            // Step1: request seed => 02 27 01
+            _can.SendFrame(RequestId, new byte[] { 0x02, 0x27, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00 });
+            var resp = WaitForResponse(ResponseId, 1000);
+            if (resp == null || resp[1] != 0x67 || resp[2] != 0x01)
+            {
+                Console.WriteLine("Security Access seed request failed.");
+                return false;
+            }
+            Console.WriteLine("Got seed: " + BitConverter.ToString(resp));
+
+            // Step2: send key => 05 27 02 <key> ...
+            // Hardcode an example key from the logs: 42 5F 6F (just an example)
+            byte[] keyPayload = { 0x05, 0x27, 0x02, 0x42, 0x5F, 0x6F, 0x00, 0x00 };
+            _can.SendFrame(RequestId, keyPayload);
+            resp = WaitForResponse(ResponseId, 1000);
+
+            if (resp == null || resp[1] != 0x67 || resp[2] != 0x02)
+            {
+                Console.WriteLine("Security Access key send failed.");
+                return false;
+            }
+            Console.WriteLine("Security Access unlocked!");
+            return true;
+        }
+
+        /// <summary>
+        /// Request Download (0x34), typically specifying an address and size
+        /// </summary>
+        public bool RequestDownload()
+        {
+            // Example: 10 0B 34 00 44 40 00 80 ...
+            byte[] request = new byte[] { 0x10, 0x0B, 0x34, 0x00, 0x44, 0x40, 0x00, 0x80 };
+            _can.SendFrame(RequestId, request);
+
+            var resp = WaitForResponse(ResponseId, 1000);
+            if (resp == null || resp.Length < 2 || resp[1] != 0x74)
+            {
+                Console.WriteLine("RequestDownload failed or no response.");
+                return false;
+            }
+            Console.WriteLine("RequestDownload accepted, response: " + BitConverter.ToString(resp));
+            return true;
+        }
+
+        /// <summary>
+        /// Transfer Data (0x36), sending multiple blocks
+        /// </summary>
+        public bool TransferData(byte[] firmware)
+        {
+            // This is a simplified example. In real UDS, you must:
+            //  1) Segment 'firmware' into blocks that fit ISO-TP frames.
+            //  2) Send them in sequence with “blockCounter” in the second byte.
+            //  3) Wait for FlowControl frames (0x30) from the ECU to pace the transfer.
+
+            // Let’s do a trivial single-chunk example if firmware < ~7 bytes.
+            // For real usage, implement the full ISO-TP sequence.
+
+            int blockSize = Math.Min(firmware.Length, 7); // single frame for example
+            byte[] request = new byte[8];
+            // 0x36 is "Request Transfer Data", next byte = blockCounter (0x01?), then data...
+            request[0] = (byte)(0x02 + blockSize); // “length” nibble for single-frame
+            request[1] = 0x36;                     // service
+            request[2] = 0x01;                     // blockCounter = 1
+            Array.Copy(firmware, 0, request, 3, blockSize);
+
+            _can.SendFrame(RequestId, request);
+
+            var resp = WaitForResponse(ResponseId, 2000);
+            if (resp == null || resp.Length < 2 || resp[1] != 0x76)
+            {
+                Console.WriteLine("TransferData failed or no response.");
+                return false;
+            }
+            Console.WriteLine("TransferData success, response: " + BitConverter.ToString(resp));
+            return true;
+        }
+
+        /// <summary>
+        /// Request Transfer Exit (0x37)
+        /// </summary>
+        public bool RequestTransferExit()
+        {
+            byte[] request = new byte[] { 0x01, 0x37, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+            _can.SendFrame(RequestId, request);
+
+            var resp = WaitForResponse(ResponseId, 1000);
+            if (resp == null)
+            {
+                Console.WriteLine("No response to RequestTransferExit.");
+                return false;
+            }
+            if (resp[0] == 0x03 && resp[1] == 0x7F && resp[2] == 0x37 && resp[3] == 0x78)
+            {
+                Console.WriteLine("NRC 0x78: Request pending. Might need to wait or poll again.");
+                // Could retry or wait longer
+                return false;
+            }
+            if (resp.Length >= 2 && resp[1] == 0x77)
+            {
+                Console.WriteLine("Transfer Exit accepted!");
+                return true;
+            }
+            Console.WriteLine($"RequestTransferExit unexpected response: {BitConverter.ToString(resp)}");
+            return false;
+        }
+
+        // -----------------------------------------------
+        // 2. Volvo Proprietary Bootloader Methods
+        // -----------------------------------------------
+
+        /// <summary>
+        /// Example: Send "0x40" command, expect "0x80" in response.
+        /// (From your logs at ~6092.77)
+        /// </summary>
+        public bool VolvoCommand40()
+        {
+            byte[] cmd = { 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+            _can.SendFrame(RequestId, cmd);
+
+            var resp = WaitForResponse(ResponseId, 500);
+            // Expect 80 ...
+            if (resp != null && resp[0] == 0x80)
+            {
+                Console.WriteLine("VolvoCmd 0x40 -> 0x80 success");
+                return true;
+            }
+            Console.WriteLine("VolvoCmd 0x40 failed.");
+            return false;
+        }
+
+        /// <summary>
+        /// Example for the repeated "0x4B" requests that appear to send an address offset in the 4th byte,
+        /// and you get "0x8B" in the response with some status bytes.
+        /// </summary>
+        public bool VolvoCommand4B(uint offset)
+        {
+            // Based on logs: 4B 00 00 [offsetLow] [offsetHigh] 80 04 00
+            byte offsetLow  = (byte)(offset & 0xFF);
+            byte offsetHigh = (byte)((offset >> 8) & 0xFF);
+
+            byte[] cmd = {
+                0x4B, 0x00, 0x00, offsetLow, offsetHigh, 0x80, 0x04, 0x00
+            };
+
+            _can.SendFrame(RequestId, cmd);
+
+            var resp = WaitForResponse(ResponseId, 500);
+            if (resp == null)
+            {
+                Console.WriteLine($"No response for 0x4B offset=0x{offset:X}");
+                return false;
+            }
+            if (resp[0] == 0x8B)
+            {
+                // Possibly 8B 80 BA BE ...
+                Console.WriteLine($"Offset 0x{offset:X}, success: {BitConverter.ToString(resp)}");
+                return true;
+            }
+            Console.WriteLine($"Offset 0x{offset:X}, unexpected response: {BitConverter.ToString(resp)}");
+            return false;
+        }
+
+        // -----------------------------------------------
+        // 3. One Combined "Flash" Flow
+        // -----------------------------------------------
+        public void DoFullReflash(byte[] newFirmware)
+        {
+            // Step 1: Standard UDS flow
+            if (!StartProgrammingSession()) return;
+            if (!DoSecurityAccess()) return;
+            if (!RequestDownload()) return;
+            if (!TransferData(newFirmware)) return;
+            if (!RequestTransferExit()) {
+                Console.WriteLine("TransferExit failed or pending. Attempting to continue...");
+            }
+
+            // Step 2: Now switch to Volvo custom
+            if (!VolvoCommand40()) return;
+
+            // Possibly do 0x4E, 0x41, etc. 
+            // For illustration, we do multiple "0x4B" with offsets from 0 to 0x100 in increments of 4.
+            for (uint addr = 0; addr <= 0x100; addr += 4)
+            {
+                if (!VolvoCommand4B(addr))
+                {
+                    Console.WriteLine("Aborting custom flash steps");
+                    break;
+                }
+            }
+
+            Console.WriteLine("Done with reflash procedure!");
+        }
+
+        // -----------------------------------------------
+        // Utility: WaitForResponse
+        // -----------------------------------------------
+        private byte[]? WaitForResponse(int respId, int timeoutMs)
+        {
+            DateTime start = DateTime.Now;
+            while ((DateTime.Now - start).TotalMilliseconds < timeoutMs)
+            {
+                var frame = _can.ReceiveFrame();
+                if (frame != null && frame.CanId == respId && frame.Data.Length > 0)
+                {
+                    return frame.Data;
+                }
+                Thread.Sleep(1);
+            }
+            return null;
+        }
+    }
+
+    #region Mock interface
+    public interface ICanInterface
+    {
+        void SendFrame(int canId, byte[] data);
+        CanFrame? ReceiveFrame();
+    }
+    public struct CanFrame
+    {
+        public int CanId { get; set; }
+        public byte[] Data { get; set; }
+    }
+    #endregion
+}
+Explanation
+UDS Phase
+
+Follows standard 0x10/0x27/0x34/0x36/0x37/0x31 pattern.
+Uses a simple “SendFrame/WaitForResponse” approach. In a real system, you’d likely implement or use a library for ISO-TP (transport protocol) for multi-frame data (flow control, block size, etc.).
+Transition
+
+After finishing (or partially finishing) the standard steps, the ECU transitions into a different mode. Possibly the last routine control or a special command triggers the ECU to accept new “Volvo custom” commands.
+Volvo Proprietary Commands
+
+0x40 → 0x80, 0x4E → 0x8E, 0x4B → 0x8B with additional parameters.
+The repeated 0x4B frames with incremental offsets strongly suggest writing/reading 4-byte blocks in some memory region.
+The responses 8B 80 BA BE ... might be status bytes, sequence checks, or data echoes.
+Final Massive ‘FF FF FF ...’
+
+Near the end, you see the ECU sending a big chunk of 0xFF data. Possibly the tool is reading from an erased flash region or the ECU is streaming out memory content.
+4. Wrap-Up Notes
+Your log clearly shows a UDS-compliant sequence at first, then a custom Volvo mode.
+The best guess is that after the standard security / session, the ECU jumps into a manufacturer-specific bootloader that listens on the same CAN IDs but no longer uses standard 0x10/0x27/0x36 style codes. Instead, they use single-byte “opcodes” (0x40, 0x4E, 0x4B, etc.), with the high bit set in the response.
+The final portion with incrementing 4-byte addresses (0x4B 00 00 XX 00 80 04 00) and repeated responses 0x8B 80 BA BE is presumably a memory read/write loop.
+If you integrate both phases into your software:
+
+Implement standard UDS to unlock the ECU, set the session, and possibly begin the flash.
+Detect or command the ECU to switch to Volvo’s proprietary mode (the “0x40” handshake).
+Send the chunked instructions (0x4B) until done.
+(Optionally) handle reading or verifying memory, if that’s part of the process (the flood of 0xFF frames suggests a memory read).
+Because you have partial logs and no official docs, you’ll still need some trial-and-error. But the structure is quite clear: standard UDS first, then “Volvo-proprietary bootloader.” The example C# code above should give you a solid starting point for implementing both sides in a single application.
+
+
+
+
+
+
+u
+
+
+
+
+
+
+ChatGPT can make mistakes. Check impo
+ChatGPT can make mistakes. Check impo

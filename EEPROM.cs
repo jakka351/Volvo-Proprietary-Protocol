@@ -88,10 +88,10 @@ namespace OBD2
 		{
 			try
 			{
-        ecuRxIdentifier1 = 0x07;
-        ecuRxIdentifier2 = 0xFF;
-        bool bootloaderFlag = false;
-        using (SaveFileDialog saveFileDialog = new SaveFileDialog())
+                ecuRxIdentifier1 = 0x07;
+                ecuRxIdentifier2 = 0xFF;
+                bool bootloaderFlag = false;
+                using (SaveFileDialog saveFileDialog = new SaveFileDialog())
 				{
 					saveFileDialog.Title = "Volvo D13 Flasher";
 					saveFileDialog.DefaultExt = "bin";
@@ -99,12 +99,12 @@ namespace OBD2
 					saveFileDialog.FileName = "Volvo EEPROM.bin";
 					if (saveFileDialog.ShowDialog() == DialogResult.OK)
 					{
-            string filePath = saveFileDialog.FileName;
-            FileStream fileStream = File.Open(filePath, FileMode.Create);
-            //base hex  timestamps absolute
-            //1251.105224 1 07FF       Rx   d 8 05 10 02 54 52 57 00 00 >> START DIAG SESSION
-            //1251.106224 1 07FE       Rx   d 8 06 50 02 00 19 01 F4 00 //
-            startDiagnosticSession(0x02); // Messaage might need to have more added to it to matchthe CAN log
+                        string filePath = saveFileDialog.FileName;
+                        FileStream fileStream = File.Open(filePath, FileMode.Create);
+                        //base hex  timestamps absolute
+                        //1251.105224 1 07FF       Rx   d 8 05 10 02 54 52 57 00 00 >> START DIAG SESSION
+                        //1251.106224 1 07FE       Rx   d 8 06 50 02 00 19 01 F4 00 //
+                        startDiagnosticSession(0x02); // Messaage might need to have more added to it to matchthe CAN log
 						controlDtcSetting(0x02); // stop dtc logging for flash routine
 						try
 						{
@@ -131,8 +131,8 @@ namespace OBD2
 								//1251.335224 1 07FE       Rx   d 8 21 57 20 42 4F 4F 54 2D 
 								//1251.335224 1 07FF       Rx   d 8 30 00 00 00 00 00 00 00 
 								//1251.336224 1 07FE       Rx   d 8 22 30 31 2E 30 37 56 00 //
-                byte[] mode22eeprom = { 0x00, 0x00, 0x07, 0xFF, 0x22, 0xF1, 0x80 };
-                sendPassThruMsg(mode22eeprom);
+		                        byte[] mode22eeprom = { 0x00, 0x00, 0x07, 0xFF, 0x22, 0xF1, 0x80 };
+		                        sendPassThruMsg(mode22eeprom);
 								//1251.541224 1 07FF       Rx   d 8 10 0B 34 00 44 40 00 80 >> Request Download
 								//1251.542224 1 07FE       Rx   d 8 30 00 00 00 00 00 00 00 
 								//1251.542224 1 07FF       Rx   d 8 21 00 00 00 3A 00 00 00 
@@ -178,8 +178,8 @@ namespace OBD2
                                                         connectSelectedJ2534Device();
                                                         connectFlag = true;
                                                         connectSelectedJ2534ToCAN(); // Set protocol to CAN
-                            														byte[] data = new byte[0x3FC];
-                            														// Step 2: Now switch to Volvo custom protocol
+														byte[] data = new byte[0x3FC];
+														// Step 2: Now switch to Volvo custom protocol
                                                         if (!volvoStartCommand()) return;
                                                         // Possibly do 0x4E, 0x41, etc. 
                                                         // For illustration, we do multiple "0x4B" with offsets from 0 to 0x100 in increments of 4.
@@ -187,8 +187,8 @@ namespace OBD2
                                                         {
                                                             data = VolvoCommand4B(addr);
                                                             fileStream.Write(data, 0, data.Length);
-                            															if(addr == 0x3FC) { break; }  // EEPROM is 3FC in length
-                            														}
+															if(addr == 0x3FC) { break; }  // EEPROM is 3FC in length
+														}
                                                         fileStream.Close();
                                                         Log("Volvo Proprietary Protocol Routine complete.");
                                                     }
@@ -197,8 +197,10 @@ namespace OBD2
                                                     break;
 		                                    }
 		                                }
+
 		                            }
 		                            catch (Exception Ex) { Log("Request Download Error\r\n"); }
+
 		                        }
 		                        else { MessageBox.Show("Error Requesting EEPROM Download", "Volvo D13 Flasher");  }
 							

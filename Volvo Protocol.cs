@@ -81,6 +81,7 @@ using J2534;
 using Microsoft.Build.Tasks;
 using static System.Collections.Specialized.BitVector32;
 using static System.Windows.Forms.AxHost;
+using System.ComponentModel.Design;
 // ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 namespace OBD2
 {
@@ -94,21 +95,28 @@ namespace OBD2
                 // 6088.22928 1 07FF Rx   d 8 21 00 00 00 00 00 00 00 >> Havent Included this frame in the Volvo Protocol.cs file yet
                 // 6092.76928 1 07FF Rx   d 8 40 00 00 00 00 00 00 00 >> Start Session
                 // 6092.85928 1 07FE Rx   d 8 80 00 00 00 00 00 00 00 << Positive Response(+40)
-
+                byte[] command21 = { 0x00, 0x00, 0x07, 0xFF, 0x21, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+                sendPassThruMsg(command21);
+                byte[] command40 = { 0x00, 0x00, 0x07, 0xFF, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+                sendPassThruMsg(command40);
                 // 6092.88928 1 07FF Rx   d 8 4E 00 00 00 00 00 00 00 >> Request
                 // 6092.89928 1 07FE Rx   d 8 8E 00 00 00 57 77 E0 10 << Response that appears to be multiframe
                 // 6092.91928 1 07FE Rx   d 8 CE 00 00 00 40 00 00 98 <<
                 // 6092.92928 1 07FE Rx   d 8 0E 00 00 00 10 01 20 20 <<
-
+                byte[] command4E = { 0x00, 0x00, 0x07, 0xFF, 0x4E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+                sendPassThruMsg(command4E);
                 // 6092.98928 1 07FF Rx   d 8 41 00 00 00 00 00 00 00 >>
                 // 6093.00928 1 07FE Rx   d 8 81 54 47 71 82 13 04 3E <<
-
+                byte[] command41 = { 0x00, 0x00, 0x07, 0xFF, 0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+                sendPassThruMsg(command41);
                 // 6093.02928 1 07FF Rx   d 8 42 33 95 6B 10 12 08 29 >>
                 // 6093.04928 1 07FE Rx   d 8 82 33 95 6B 10 12 08 29 <<
-
+                byte[] command212 = { 0x00, 0x00, 0x07, 0xFF, 0x42, 0x33, 0x95, 0x6B, 0x10, 0x12, 0x08, 0x29 };
+                sendPassThruMsg(command212);
                 // 6093.06928 1 07FF Rx   d 8 44 01 00 00 00 00 00 00 >>
-                //                 6093.07928 1 07FE Rx   d 8 84 01 55 00 00 00 00 00 >>
-
+                // 6093.07928 1 07FE Rx   d 8 84 01 55 00 00 00 00 00 >>
+                byte[] command4401 = { 0x00, 0x00, 0x07, 0xFF, 0x44, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+                sendPassThruMsg(command4401);
                 // 6093.15928 1 07FF Rx   d 8 40 00 00 00 00 00 00 00 >>
                 // 6093.15928 1 07FE Rx   d 8 80 00 00 00 00 00 00 00 << These frames will all need to be put into the protcol file.
 
@@ -168,32 +176,15 @@ namespace OBD2
             switch(resp)
             {
                 case 0x00:
-                    Log($"No response for 0x4B offset=0x{offset:X}");
+                    Log($"No response for 0x4B offset=0x{offset:X} \r\n");
                     return nodat;
                 case 0x8B:
-                    Log($"Offset 0x{offset:X}, success: {resp.ToString()}");
+                    Log($"Offset 0x{offset:X}, success: {resp.ToString()} \r\n");
                     return firmwareArray;
                 default:
-                    Log($"Offset 0x{offset:X}, unexpected response: {resp.ToString()}");
+                    Log($"Offset 0x{offset:X}, unexpected response: {resp.ToString()} \r\n");
                     return nodat;
             }
         }
- 		// -----------------------------------------------
-        // 3. One Combined "Flash" Flow
-        // -----------------------------------------------
-        public void readData()
-        {
-            // Step 2: Now switch to Volvo custom
-            if (!volvoStartCommand()) return;
-            // Possibly do 0x4E, 0x41, etc. 
-            // For illustration, we do multiple "0x4B" with offsets from 0 to 0x100 in increments of 4.
-            for (uint addr = 0x0000; addr <= 0x03FC; addr += 4)
-            {
-                VolvoCommand4B(addr);
-                Log("Aborting custom flash steps");
-                // Parse Firmware Data here, or return it to flash routine method
-            }
-            Log("Volvo Proprietary Protocol Routine complete.");
-        }
-	}
+ 	}
 }
